@@ -1,4 +1,5 @@
 import hashlib
+import io
 import os
 
 import numpy as np
@@ -23,12 +24,12 @@ CLASS_NAMES = [
 CLASS_EMOJIS = ["👕", "👖", "🧥", "👗", "🥼", "👡", "👔", "👟", "👜", "👢"]
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading model...")
 def load_model():
     """Load the trained Keras CNN model from disk.
 
     Returns:
-        tf.keras.Model or None if the model file is missing.
+        tf.keras.Model or None if the model file is missing or fails to load.
     """
     model_path = "fashion_mnist_cnn.keras"
     if not os.path.exists(model_path):
@@ -36,11 +37,20 @@ def load_model():
     try:
         return tf.keras.models.load_model(model_path)
     except Exception as e:
-        st.error(f"Failed to load model: {e}. Make sure 'fashion_mnist_cnn.keras' exists in the app directory.")
+        st.error(
+            f"Failed to load model: {e}. "
+            "Make sure 'fashion_mnist_cnn.keras' exists in the app directory."
+        )
         return None
 
 
-model = load_model()
+# BUG-001 FIX: wrap top-level model call in try/except so app never crashes silently
+try:
+    model = load_model()
+except Exception as e:
+    st.error(f"Unexpected error while loading model: {e}")
+    st.stop()
+
 if model is None:
     st.error(
         "⚠️ Model file `fashion_mnist_cnn.keras` not found.\n\n"
@@ -57,15 +67,17 @@ st.write(
     "The CNN model will resize it to 28×28 grayscale and predict the fashion category."
 )
 
-# Sidebar: model architecture info
+# Sidebar: model architecture info — BUG-004 FIX: synced with actual train_model.py architecture
 with st.sidebar:
     st.header("🧠 Model Architecture")
     st.markdown("""
     | Layer | Details |
     |---|---|
     | Input | 28×28×1 grayscale |
-    | Conv2D (1) | 32 filters, 3×3, ReLU + BatchNorm + MaxPool |
-    | Conv2D (2) | 64 filters, 3×3, ReLU + BatchNorm + MaxPool |
+    | Conv2D (1) | 32 filters, 3×3, ReLU + BatchNorm |
+    | MaxPool2D | 2×2 |
+    | Conv2D (2) | 64 filters, 3×3, ReLU + BatchNorm |
+    | MaxPool2D | 2×2 |
     | Conv2D (3) | 128 filters, 3×3, ReLU + BatchNorm |
     | Flatten | — |
     | Dense | 256 units, ReLU + Dropout (0.5) |
@@ -90,18 +102,20 @@ if uploaded_file is not None:
         st.error("File too large. Please upload an image under 5MB.")
         st.stop()
 
+    # BUG-002 FIX: capture raw bytes BEFORE any seek/verify so getvalue() is always reliable
+    raw_bytes = uploaded_file.getvalue()
+
     # Server-side image content validation via Pillow verify()
     try:
-        _verify_img = Image.open(uploaded_file)
+        _verify_img = Image.open(io.BytesIO(raw_bytes))
         _verify_img.verify()
-        uploaded_file.seek(0)
     except Exception:
         st.error("Invalid or corrupted image file. Please upload a valid JPG or PNG.")
         st.stop()
 
     # Read image as grayscale
     try:
-        image = Image.open(uploaded_file).convert("L")
+        image = Image.open(io.BytesIO(raw_bytes)).convert("L")
     except Exception as e:
         st.error(f"Could not read image file: {e}. Please upload a valid JPG or PNG.")
         st.stop()
@@ -138,8 +152,8 @@ if uploaded_file is not None:
                 width=140
             )
 
-    # Cache predictions by image hash
-    img_hash = hashlib.md5(uploaded_file.getvalue()).hexdigest()
+    # Cache predictions by image hash (BUG-002 FIX: uses pre-captured raw_bytes)
+    img_hash = hashlib.md5(raw_bytes).hexdigest()
     if st.session_state.get("last_hash") != img_hash:
         with st.spinner("Classifying..."):
             predictions = model.predict(input_tensor, verbose=0)

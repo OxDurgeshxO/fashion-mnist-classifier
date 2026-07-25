@@ -17,6 +17,12 @@ def create_samples(output_dir: str = "sample_images") -> None:
     Args:
         output_dir: Directory to save the sample images into.
     """
+    # ISSUE-004 FIX: Skip regeneration if all samples already exist
+    expected_files = [os.path.join(output_dir, f"{name}.png") for name in CLASS_NAMES]
+    if all(os.path.exists(f) for f in expected_files):
+        print(f"All {len(CLASS_NAMES)} sample images already exist in '{output_dir}/'. Skipping.")
+        return
+
     os.makedirs(output_dir, exist_ok=True)
 
     try:

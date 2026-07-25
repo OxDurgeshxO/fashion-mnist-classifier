@@ -8,13 +8,16 @@ Run this once before launching the Streamlit app:
 Outputs: fashion_mnist_cnn.keras
 """
 
+import random
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, models
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.datasets import fashion_mnist
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
+# Full reproducibility (BUG-FIX: added random.seed)
+random.seed(42)
 tf.random.set_seed(42)
 np.random.seed(42)
 
@@ -35,27 +38,39 @@ x_test = np.expand_dims(x_test, -1)     # (10000, 28, 28, 1)
 y_train_cat = tf.keras.utils.to_categorical(y_train, NUM_CLASSES)
 y_test_cat = tf.keras.utils.to_categorical(y_test, NUM_CLASSES)
 
-# ── Data augmentation ────────────────────────────────────────────────────────
-# Mild augmentation suitable for Fashion MNIST (small 28x28 images)
-datagen = ImageDataGenerator(
-    rotation_range=10,
-    width_shift_range=0.1,
-    height_shift_range=0.1,
-    zoom_range=0.1,
-    horizontal_flip=True,
-    validation_split=0.2
-)
-datagen.fit(x_train)
+# ── Data augmentation via tf.data (BUG-FIX: replaced deprecated ImageDataGenerator) ──
+# Split train into train/val (80/20)
+val_size = int(0.2 * len(x_train))
+x_val, y_val = x_train[:val_size], y_train_cat[:val_size]
+x_tr, y_tr = x_train[val_size:], y_train_cat[val_size:]
 
-train_gen = datagen.flow(x_train, y_train_cat, batch_size=BATCH_SIZE, subset="training", seed=42)
-val_gen = datagen.flow(x_train, y_train_cat, batch_size=BATCH_SIZE, subset="validation", seed=42)
+augmentation = tf.keras.Sequential([
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.1),
+    layers.RandomTranslation(height_factor=0.1, width_factor=0.1),
+    layers.RandomZoom(0.1),
+], name="augmentation")
+
+train_dataset = (
+    tf.data.Dataset.from_tensor_slices((x_tr, y_tr))
+    .shuffle(len(x_tr), seed=42)
+    .batch(BATCH_SIZE)
+    .map(lambda x, y: (augmentation(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+    .prefetch(tf.data.AUTOTUNE)
+)
+
+val_dataset = (
+    tf.data.Dataset.from_tensor_slices((x_val, y_val))
+    .batch(BATCH_SIZE)
+    .prefetch(tf.data.AUTOTUNE)
+)
 
 # ── Model architecture ───────────────────────────────────────────────────────
 # CNN Architecture:
 # Input (28x28x1)
-# └─ Conv2D(32, 3x3, relu) -> MaxPool(2x2)
-# └─ Conv2D(64, 3x3, relu) -> MaxPool(2x2)
-# └─ Conv2D(128, 3x3, relu)
+# └─ Conv2D(32, 3x3, relu) + BatchNorm -> MaxPool(2x2)
+# └─ Conv2D(64, 3x3, relu) + BatchNorm -> MaxPool(2x2)
+# └─ Conv2D(128, 3x3, relu) + BatchNorm
 # └─ Flatten
 # └─ Dense(256, relu) -> Dropout(0.5)
 # └─ Dense(10, softmax)
@@ -91,9 +106,9 @@ callbacks = [
 
 # ── Train ────────────────────────────────────────────────────────────────────
 history = model.fit(
-    train_gen,
+    train_dataset,
     epochs=EPOCHS,
-    validation_data=val_gen,
+    validation_data=val_dataset,
     callbacks=callbacks,
     verbose=1
 )
