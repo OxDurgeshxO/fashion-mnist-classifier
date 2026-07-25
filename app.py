@@ -2,6 +2,7 @@ import streamlit as st
 import tensorflow as tf
 from PIL import Image
 import numpy as np
+import os
 
 # Page config
 st.set_page_config(
@@ -12,12 +13,15 @@ st.set_page_config(
 # Load the saved Keras model
 @st.cache_resource
 def load_model():
-    import os
     model_path = "fashion_mnist_cnn.keras"
     if not os.path.exists(model_path) and os.path.exists("fashion_mnist_cnn (1).keras"):
         model_path = "fashion_mnist_cnn (1).keras"
-    model = tf.keras.models.load_model(model_path)
-    return model
+    try:
+        model = tf.keras.models.load_model(model_path)
+        return model
+    except Exception as e:
+        st.error(f"Failed to load model: {e}. Make sure 'fashion_mnist_cnn.keras' exists in the app directory.")
+        st.stop()
 
 model = load_model()
 
@@ -41,9 +45,19 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Read and show image
-    image = Image.open(uploaded_file).convert("L")  # grayscale
-    st.image(image, caption="Uploaded image", use_container_width=True)
+    # File size validation (5MB limit)
+    if uploaded_file.size > 5 * 1024 * 1024:
+        st.error("File too large. Please upload an image under 5MB.")
+        st.stop()
+
+    # Read and show image safely
+    try:
+        image = Image.open(uploaded_file).convert("L")  # grayscale
+    except Exception as e:
+        st.error(f"Could not read image file: {e}. Please upload a valid JPG or PNG.")
+        st.stop()
+
+    st.image(image, caption="Uploaded image", width=200)
 
     # Preprocess: resize to 28x28, normalize
     img_resized = image.resize((28, 28))
@@ -62,8 +76,8 @@ if uploaded_file is not None:
     with st.expander("View 28x28 Preprocessed Model Input"):
         st.image(img_array, caption="Preprocessed 28x28 input (bright object on dark background)", width=140)
 
-    # Predict
-    predictions = model.predict(input_tensor)
+    # Predict (verbose=0 suppresses console noise in Streamlit)
+    predictions = model.predict(input_tensor, verbose=0)
     predicted_index = int(np.argmax(predictions[0]))
     predicted_class = class_names[predicted_index]
     confidence = float(predictions[0][predicted_index])
@@ -73,7 +87,7 @@ if uploaded_file is not None:
     st.write(f"Class: **{predicted_class}**")
     st.write(f"Confidence: {confidence:.2f}")
 
-    # Optional: show full probability distribution
+    # Full probability distribution
     st.subheader("All class probabilities")
     for i, prob in enumerate(predictions[0]):
         st.write(f"{class_names[i]}: {prob:.2f}")
