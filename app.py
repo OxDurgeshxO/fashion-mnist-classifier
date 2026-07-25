@@ -1,8 +1,10 @@
+import hashlib
+import os
+
+import numpy as np
 import streamlit as st
 import tensorflow as tf
 from PIL import Image
-import numpy as np
-import os
 
 # Page config
 st.set_page_config(
@@ -10,26 +12,34 @@ st.set_page_config(
     layout="centered"
 )
 
-# Load the saved Keras model
-@st.cache_resource
-def load_model():
-    model_path = "fashion_mnist_cnn.keras"
-    if not os.path.exists(model_path) and os.path.exists("fashion_mnist_cnn (1).keras"):
-        model_path = "fashion_mnist_cnn (1).keras"
-    try:
-        model = tf.keras.models.load_model(model_path)
-        return model
-    except Exception as e:
-        st.error(f"Failed to load model: {e}. Make sure 'fashion_mnist_cnn.keras' exists in the app directory.")
-        st.stop()
-
-model = load_model()
-
-# Fashion MNIST class names (0-9)
-class_names = [
+# Fashion MNIST official class names (0-9)
+CLASS_NAMES = [
     "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
     "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
 ]
+
+
+@st.cache_resource
+def load_model():
+    """Load the trained Keras CNN model from disk.
+
+    Returns:
+        tf.keras.Model or None if the model file is missing.
+    """
+    model_path = "fashion_mnist_cnn.keras"
+    if not os.path.exists(model_path):
+        return None
+    try:
+        return tf.keras.models.load_model(model_path)
+    except Exception as e:
+        st.error(f"Failed to load model: {e}. Make sure 'fashion_mnist_cnn.keras' exists in the app directory.")
+        return None
+
+
+model = load_model()
+if model is None:
+    st.error("Model file 'fashion_mnist_cnn.keras' not found. Please add it to the app directory.")
+    st.stop()
 
 # App title and description
 st.title("Fashion MNIST Image Classifier")
@@ -50,9 +60,18 @@ if uploaded_file is not None:
         st.error("File too large. Please upload an image under 5MB.")
         st.stop()
 
-    # Read and show image safely
+    # Server-side image content validation via Pillow verify()
     try:
-        image = Image.open(uploaded_file).convert("L")  # grayscale
+        _verify_img = Image.open(uploaded_file)
+        _verify_img.verify()  # raises if file is not a valid image
+        uploaded_file.seek(0)  # reset stream after verify()
+    except Exception:
+        st.error("Invalid or corrupted image file. Please upload a valid JPG or PNG.")
+        st.stop()
+
+    # Read image as grayscale
+    try:
+        image = Image.open(uploaded_file).convert("L")
     except Exception as e:
         st.error(f"Could not read image file: {e}. Please upload a valid JPG or PNG.")
         st.stop()
@@ -63,31 +82,50 @@ if uploaded_file is not None:
     img_resized = image.resize((28, 28))
     img_array = np.array(img_resized).astype("float32") / 255.0
 
-    # Fashion MNIST models expect white/bright clothing on a dark/black background.
-    # If the uploaded image has a light background (mean brightness > 0.5), invert colors.
-    if img_array.mean() > 0.5:
+    # Background detection using corner pixels instead of full-image mean.
+    # Fashion MNIST expects bright clothing on a dark background.
+    # Sample the four 3x3 corners to estimate background brightness.
+    corners = np.concatenate([
+        img_array[:3, :3].flatten(),
+        img_array[:3, -3:].flatten(),
+        img_array[-3:, :3].flatten(),
+        img_array[-3:, -3:].flatten(),
+    ])
+    if corners.mean() > 0.5:
         img_array = 1.0 - img_array
 
-    # Reshape for Keras model (1, 28, 28, 1)
-    input_tensor = np.expand_dims(img_array, axis=-1)   # (28, 28, 1)
-    input_tensor = np.expand_dims(input_tensor, axis=0) # (1, 28, 28, 1)
+    # Reshape for Keras model: (1, 28, 28, 1)
+    input_tensor = np.expand_dims(img_array, axis=-1)    # (28, 28, 1)
+    input_tensor = np.expand_dims(input_tensor, axis=0)  # (1, 28, 28, 1)
 
     # Show preprocessed image preview
     with st.expander("View 28x28 Preprocessed Model Input"):
-        st.image(img_array, caption="Preprocessed 28x28 input (bright object on dark background)", width=140)
+        st.image(
+            img_array,
+            caption="Preprocessed 28x28 input (bright object on dark background)",
+            width=140
+        )
 
-    # Predict (verbose=0 suppresses console noise in Streamlit)
-    predictions = model.predict(input_tensor, verbose=0)
+    # Cache predictions by image hash to avoid re-running on every Streamlit interaction
+    img_hash = hashlib.md5(uploaded_file.getvalue()).hexdigest()
+    if st.session_state.get("last_hash") != img_hash:
+        with st.spinner("Classifying..."):
+            predictions = model.predict(input_tensor, verbose=0)
+        st.session_state["last_hash"] = img_hash
+        st.session_state["predictions"] = predictions
+    else:
+        predictions = st.session_state["predictions"]
+
     predicted_index = int(np.argmax(predictions[0]))
-    predicted_class = class_names[predicted_index]
+    predicted_class = CLASS_NAMES[predicted_index]
     confidence = float(predictions[0][predicted_index])
 
-    # Display prediction
+    # Display prediction — confidence as percentage
     st.subheader("Prediction")
     st.write(f"Class: **{predicted_class}**")
-    st.write(f"Confidence: {confidence:.2f}")
+    st.write(f"Confidence: **{confidence * 100:.1f}%**")
 
-    # Full probability distribution
-    st.subheader("All class probabilities")
-    for i, prob in enumerate(predictions[0]):
-        st.write(f"{class_names[i]}: {prob:.2f}")
+    # Full probability distribution as bar chart
+    st.subheader("All Class Probabilities")
+    prob_dict = {CLASS_NAMES[i]: float(predictions[0][i]) for i in range(len(CLASS_NAMES))}
+    st.bar_chart(prob_dict)
