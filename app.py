@@ -64,12 +64,11 @@ with st.sidebar:
     | Layer | Details |
     |---|---|
     | Input | 28×28×1 grayscale |
-    | Conv2D (1) | 32 filters, 3×3, ReLU |
-    | MaxPool2D | 2×2 |
-    | Conv2D (2) | 64 filters, 3×3, ReLU |
-    | MaxPool2D | 2×2 |
+    | Conv2D (1) | 32 filters, 3×3, ReLU + BatchNorm + MaxPool |
+    | Conv2D (2) | 64 filters, 3×3, ReLU + BatchNorm + MaxPool |
+    | Conv2D (3) | 128 filters, 3×3, ReLU + BatchNorm |
     | Flatten | — |
-    | Dense | 64 units, ReLU |
+    | Dense | 256 units, ReLU + Dropout (0.5) |
     | Output | 10 units, Softmax |
     """)
     st.markdown("---")
