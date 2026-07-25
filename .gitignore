@@ -1,0 +1,31 @@
+# Trained Keras model (large binary file — use Git LFS or exclude)
+*.keras
+
+# Generated sample images
+sample_images/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
